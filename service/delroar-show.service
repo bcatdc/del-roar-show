@@ -1,0 +1,19 @@
+[Unit]
+Description=Del Roar show logic
+PartOf=delroar.target
+After=delroar-renderer.service
+BindsTo=delroar-renderer.service
+
+# keep retrying forever: no giving up after a few fast failures at boot
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/delroar
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 show.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=delroar.target

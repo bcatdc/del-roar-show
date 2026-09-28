@@ -1,0 +1,6 @@
+[Unit]
+Description=Del Roar (renderer, show logic, speech)
+Wants=delroar-renderer.service delroar-show.service delroar-stt.service
+
+[Install]
+WantedBy=default.target

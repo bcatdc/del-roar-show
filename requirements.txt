@@ -1,0 +1,8 @@
+# The renderer, on the machine that runs the piece.
+# Also needs libmpv from the system: sudo apt install libmpv2   (Windows: libmpv-2.dll beside the scripts)
+numpy>=1.26
+pygame-ce>=2.5
+moderngl>=5.10
+mpv>=1.0.7
+sounddevice>=0.4.6
+faster-whisper>=1.0

@@ -1,0 +1,4 @@
+# Checks that run anywhere, including CI, with no GPU, sound card or printer.
+pytest>=8.0
+pyflakes>=3.2
+numpy>=1.26

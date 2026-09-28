@@ -1,0 +1,29 @@
+# per-machine settings: each machine keeps its own
+local.json
+
+# assets: too big for git, and they change constantly. Synced with scp instead.
+clips*/
+audio*/
+cuts/
+*.mp4
+*.wav
+*.mp3
+*.psd
+
+# things a run leaves behind
+vault.jsonl
+ticket.out
+render.log
+frames/
+*_rest.png
+preview*.mp4
+roughcut.mp4
+show_plan.json
+labels.txt
+
+# platform junk
+libmpv-2.dll
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/

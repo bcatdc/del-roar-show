@@ -1,0 +1,19 @@
+{
+  "_comment": "Copy to local.json on each machine and edit. Never committed.",
+
+  "ROTATE": 90,
+  "AUDIO_DEVICE": "pipewire",
+  "BED_DEVICE": "pipewire",
+  "VOLUME": 100,
+  "CLIP_DIR": "clips3",
+  "AUDIO_DIR": "audio",
+
+  "_inputs": "key: [input name, state while the contact is CLOSED, state while OPEN]. The third is optional.",
+  "INPUTS": {
+    "space": ["handset", "down", "up"],
+    "left":  ["selector", "left"],
+    "right": ["selector", "right"]
+  },
+
+  "_laptop": {"ROTATE": 0, "CLIP_DIR": "clips3", "INPUTS": {"w": ["handset", "up"], "a": ["selector", "left"], "d": ["selector", "right"]}}
+}

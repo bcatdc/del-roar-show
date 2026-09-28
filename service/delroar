@@ -1,0 +1,163 @@
+#!/bin/bash
+# delroar - one command for the whole piece.
+#   delroar start | stop | restart | status | logs | follow | enable | disable
+#   delroar update    pull the latest code and restart
+#   delroar version   what this machine is running
+#   delroar net       what network we are on, and how to reach this machine
+#   delroar wifi      join a wi-fi network by picking it from a list
+set -u
+UNITS="delroar-renderer delroar-show delroar-stt"
+
+# NetworkManager refuses scans and changes from an SSH session unless the polkit
+# rule in this folder is installed; fall back to sudo so it works either way.
+nm() {
+  local out rc
+  out="$(nmcli "$@" 2>&1)"; rc=$?
+  if [ $rc -ne 0 ] && [[ "$out" == *"not authorized"* || "$out" == *"insufficient privileges"* ]]; then
+    out="$(sudo nmcli "$@" 2>&1)"; rc=$?
+    [ $rc -eq 0 ] && echo "(used sudo; install service/50-delroar-network.rules to avoid this)" >&2
+  fi
+  printf '%s\n' "$out"
+  return $rc
+}
+
+save_profile() {   # a network that isn't in range yet, e.g. a hotspot that is off
+  local ssid="$1" pw="$2"
+  nm connection delete "$ssid" >/dev/null 2>&1
+  if [ -n "$pw" ]; then
+    nm connection add type wifi con-name "$ssid" ifname "*" ssid "$ssid" \
+      wifi-sec.key-mgmt wpa-psk wifi-sec.psk "$pw" connection.autoconnect yes >/dev/null
+  else
+    nm connection add type wifi con-name "$ssid" ifname "*" ssid "$ssid" \
+      connection.autoconnect yes >/dev/null
+  fi
+  echo "Saved '$ssid'. It will join by itself whenever that network is in range."
+}
+
+wifi_wizard() {
+  command -v nmcli >/dev/null || { echo "NetworkManager (nmcli) isn't installed."; exit 1; }
+  local running=0
+  systemctl --user is-active --quiet delroar-renderer && running=1
+  if [ "$running" = 1 ]; then
+    echo "Stopping the piece so this can use the screen ..."
+    systemctl --user stop $UNITS
+  fi
+
+  echo "Scanning ..."
+  nm device wifi rescan >/dev/null 2>&1
+  sleep 3
+  mapfile -t nets < <(nm -t -f SSID,SIGNAL,SECURITY device wifi list | awk -F: '$1!=""' | sort -u -t: -k1,1)
+  if [ "${#nets[@]}" = 0 ]; then
+    echo "No networks found. Is the wi-fi adapter on? (nmcli radio wifi on)"
+  else
+    echo
+    echo "   #  network                          signal  security"
+    local i=1
+    for n in "${nets[@]}"; do
+      printf "  %2d  %-32s %4s%%   %s\n" "$i" "$(echo "$n" | cut -d: -f1)" \
+        "$(echo "$n" | cut -d: -f2)" "$(echo "$n" | cut -d: -f3)"
+      i=$((i+1))
+    done
+    echo
+    read -rp "Number to join (or Enter to type an SSID, q to quit): " pick
+    local ssid=""
+    if [ "$pick" = "q" ]; then ssid=""
+    elif [ -z "$pick" ]; then read -rp "Network name: " ssid
+    elif [ "$pick" -ge 1 ] 2>/dev/null && [ "$pick" -le "${#nets[@]}" ]; then
+      ssid="$(echo "${nets[$((pick-1))]}" | cut -d: -f1)"
+    else echo "Not a choice on the list."; fi
+
+    if [ -n "$ssid" ]; then
+      read -rsp "Password for '$ssid' (Enter if it has none): " pw; echo
+      echo "Joining ..."
+      local result
+      if [ -n "$pw" ]; then result="$(nm device wifi connect "$ssid" password "$pw")"
+      else result="$(nm device wifi connect "$ssid")"; fi
+      echo "$result"
+      if [[ "$result" == *"No network with SSID"* || "$result" == *"not found"* ]]; then
+        echo
+        echo "That network isn't in range right now (a phone hotspot that is off, or hidden)."
+        read -rp "Save it anyway, to join automatically later? [Y/n] " yn
+        [[ "${yn:-y}" =~ ^[Yy]?$ ]] && save_profile "$ssid" "$pw"
+      fi
+      sleep 2
+    fi
+  fi
+
+  echo; "$0" net
+  if [ "$running" = 1 ]; then
+    echo; echo "Starting the piece again ..."
+    systemctl --user start delroar.target
+  fi
+}
+
+REPO="${DELROAR_REPO:-$HOME/delroar}"
+
+version_line() {
+  if git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1; then
+    echo "code:  $(git -C "$REPO" log -1 --format='%h %ad %s' --date=short)"
+    local dirty
+    dirty="$(git -C "$REPO" status --porcelain | wc -l)"
+    [ "$dirty" -gt 0 ] && echo "       ($dirty file(s) changed on this machine)"
+  else
+    echo "code:  not a git checkout ($REPO)"
+  fi
+}
+
+update() {
+  git -C "$REPO" rev-parse --git-dir >/dev/null 2>&1 || {
+    echo "$REPO isn't a git checkout; clone the repo there first."; exit 1; }
+  local before after
+  before="$(git -C "$REPO" rev-parse HEAD)"
+  echo "Pulling ..."
+  if ! git -C "$REPO" pull --ff-only; then
+    echo
+    echo "Pull refused. Usually this machine has local edits; 'git -C $REPO status' shows them."
+    echo "Machine settings belong in local.json, which git ignores."
+    exit 1
+  fi
+  after="$(git -C "$REPO" rev-parse HEAD)"
+  if [ "$before" = "$after" ]; then
+    echo "Already up to date."
+  else
+    echo; git -C "$REPO" log --oneline "$before..$after" | sed 's/^/  /'; echo
+  fi
+  version_line
+  "$0" restart
+}
+
+net_status() {
+  echo "network:"
+  nmcli -t -f NAME,TYPE,DEVICE connection show --active | sed 's/^/  /'
+  echo "addresses:"
+  ip -4 -o addr show scope global 2>/dev/null | awk '{print "  " $2 ": " $4}'
+  if command -v tailscale >/dev/null; then
+    echo "tailscale:"
+    tailscale status --peers=false 2>/dev/null | sed 's/^/  /' || echo "  not connected"
+  fi
+}
+
+case "${1:-status}" in
+  start)    systemctl --user start delroar.target; sleep 1; exec "$0" status ;;
+  stop)     systemctl --user stop $UNITS ;;
+  restart)  systemctl --user restart delroar-renderer; sleep 2
+            systemctl --user restart delroar-show delroar-stt; sleep 1; exec "$0" status ;;
+  status)   systemctl --user --no-pager --lines=0 status $UNITS | \
+              grep -E "^(●|×|\s+Active:|\s+Loaded:)" ;;
+  logs)     journalctl --user -u delroar-renderer -u delroar-show -u delroar-stt \
+              --no-pager -n "${2:-60}" ;;
+  follow)   journalctl --user -u delroar-renderer -u delroar-show -u delroar-stt -f ;;
+  enable)   loginctl enable-linger "$USER"
+            systemctl --user enable delroar.target $UNITS; echo "will start at boot" ;;
+  disable)  systemctl --user disable delroar.target $UNITS; echo "will not start at boot" ;;
+  update)   update ;;
+  version)  version_line ;;
+  net)      net_status ;;
+  saved)    echo "networks this machine will join by itself:"
+            nm -t -f NAME,TYPE connection show | awk -F: '$2=="802-11-wireless"{print "  " $1}' ;;
+  forget)   [ $# -ge 2 ] || { echo "usage: delroar forget <network name>"; exit 1; }
+            nm connection delete "$2" ;;
+  wifi)     wifi_wizard ;;
+  *)        echo "usage: delroar {start|stop|restart|status|logs [n]|follow|enable|disable|update|version|net|wifi|saved|forget <name>}"
+            exit 1 ;;
+esac

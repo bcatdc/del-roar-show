@@ -1,0 +1,10 @@
+// Let members of the sudo group manage wi-fi over SSH.
+// NetworkManager normally allows this only from a session physically at the
+// machine, so scanning and joining fail with "not authorized" over SSH.
+// Install: sudo cp 50-delroar-network.rules /etc/polkit-1/rules.d/
+polkit.addRule(function(action, subject) {
+    if (action.id.indexOf("org.freedesktop.NetworkManager.") === 0 &&
+        subject.isInGroup("sudo")) {
+        return polkit.Result.YES;
+    }
+});

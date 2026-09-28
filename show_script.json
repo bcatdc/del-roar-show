@@ -1,0 +1,237 @@
+{
+  "notes": [
+    "Prompts are placeholders from our examples - replace each listen step's 'prompt' with that beat's stem, two lines of up to 20 characters.",
+    "For a knob-only question like the trade, change a step's type to 'choose', drop 'prompt'/'hint', and set knob labels, e.g. THE DREAD / THE DESIRE or NOT YET / IT IS SPOKEN.",
+    "'end' plays the sleep clip and returns to attract. Hanging up does the same from any step.",
+    "Ticket: tag one listen step \"field\": \"name\", one \"age\", and the traded one \"trade\". Printing happens at the step with \"ticket\": true, or a step of type \"ticket\"; without one it never prints."
+  ],
+  "attract": {
+    "clip": "attract",
+    "light": "attract",
+    "every": 6,
+    "cycle": [
+      [
+        "",
+        "LIFT THE HANDSET",
+        ""
+      ],
+      [
+        "THE FANTABULOUS",
+        "DEL ROAR",
+        "FORTUNE EXCHANGER"
+      ]
+    ]
+  },
+  "sleep_clip": "sleep",
+  "idle": [
+    "idle_a",
+    "idle_b",
+    "idle_c"
+  ],
+  "steps": [
+    {
+      "id": "wake",
+      "type": "play",
+      "clip": "wake",
+      "light": {
+        "preset": "on",
+        "flicker": true,
+        "over": 1.0
+      }
+    },
+    {
+      "id": "segment_1",
+      "type": "play",
+      "clip": "segment_1"
+    },
+    {
+      "id": "listen_1",
+      "type": "listen",
+      "bed": "vamp_1",
+      "bed_fade": 0.8,
+      "prompt": [
+        "I STAY UP AT NIGHT",
+        "WORRYING ABOUT THE"
+      ],
+      "hint": "SPEAK NOW",
+      "knob": {
+        "left": "SAY IT AGAIN",
+        "right": "LET IT STAND"
+      },
+      "on_left": "again",
+      "on_right": "next",
+      "field": "name"
+    },
+    {
+      "id": "segment_2",
+      "type": "play",
+      "clip": "segment_2",
+      "board": [
+        "IT IS SPOKEN.",
+        "IT IS HEARD.",
+        "IT IS DONE."
+      ],
+      "hold": 6
+    },
+    {
+      "id": "listen_2",
+      "type": "listen",
+      "bed": "vamp_2",
+      "bed_fade": 0.8,
+      "prompt": [
+        "ONE THING I WISH TO",
+        "SEE BEFORE I DIE IS"
+      ],
+      "hint": "SPEAK NOW",
+      "knob": {
+        "left": "SAY IT AGAIN",
+        "right": "LET IT STAND"
+      },
+      "on_left": "again",
+      "on_right": "next",
+      "field": "age"
+    },
+    {
+      "id": "segment_3",
+      "type": "play",
+      "clip": "segment_3",
+      "board": [
+        "IT IS SPOKEN.",
+        "IT IS HEARD.",
+        "IT IS DONE."
+      ],
+      "hold": 6
+    },
+    {
+      "id": "listen_3",
+      "type": "listen",
+      "bed": "vamp_3",
+      "bed_fade": 0,
+      "prompt": [
+        "I STAY UP AT NIGHT",
+        "WORRYING ABOUT THE"
+      ],
+      "hint": "SPEAK NOW",
+      "knob": {
+        "left": "SAY IT AGAIN",
+        "right": "LET IT STAND"
+      },
+      "on_left": "again",
+      "on_right": "next",
+      "field": "trade"
+    },
+    {
+      "id": "segment_4",
+      "type": "play",
+      "clip": "segment_4",
+      "board": [
+        "IT IS SPOKEN.",
+        "IT IS HEARD.",
+        "IT IS DONE."
+      ],
+      "hold": 6
+    },
+    {
+      "id": "listen_4",
+      "type": "listen",
+      "bed": "vamp_4",
+      "bed_fade": 0.8,
+      "prompt": [
+        "ONE THING I WISH TO",
+        "SEE BEFORE I DIE IS"
+      ],
+      "hint": "SPEAK NOW",
+      "knob": {
+        "left": "SAY IT AGAIN",
+        "right": "LET IT STAND"
+      },
+      "on_left": "again",
+      "on_right": "next"
+    },
+    {
+      "id": "segment_5",
+      "type": "play",
+      "clip": "segment_5",
+      "board": [
+        "IT IS SPOKEN.",
+        "IT IS HEARD.",
+        "IT IS DONE."
+      ],
+      "hold": 6
+    },
+    {
+      "id": "listen_5",
+      "type": "listen",
+      "bed": "vamp_5",
+      "bed_fade": 0.8,
+      "prompt": [
+        "I STAY UP AT NIGHT",
+        "WORRYING ABOUT THE"
+      ],
+      "hint": "SPEAK NOW",
+      "knob": {
+        "left": "SAY IT AGAIN",
+        "right": "LET IT STAND"
+      },
+      "on_left": "again",
+      "on_right": "next"
+    },
+    {
+      "id": "segment_6",
+      "type": "play",
+      "clip": "segment_6",
+      "board": [
+        "IT IS SPOKEN.",
+        "IT IS HEARD.",
+        "IT IS DONE."
+      ],
+      "hold": 6
+    },
+    {
+      "id": "listen_6",
+      "type": "listen",
+      "bed": "vamp_6",
+      "bed_fade": 0.8,
+      "prompt": [
+        "ONE THING I WISH TO",
+        "SEE BEFORE I DIE IS"
+      ],
+      "hint": "SPEAK NOW",
+      "knob": {
+        "left": "SAY IT AGAIN",
+        "right": "LET IT STAND"
+      },
+      "on_left": "again",
+      "on_right": "next"
+    },
+    {
+      "id": "segment_7",
+      "type": "play",
+      "clip": "segment_7",
+      "board": [
+        "IT IS SPOKEN.",
+        "IT IS HEARD.",
+        "IT IS DONE."
+      ],
+      "hold": 6,
+      "ticket": true
+    },
+    {
+      "id": "done",
+      "type": "end"
+    }
+  ],
+  "ticket": {
+    "enabled": true,
+    "printer": "file:ticket.out",
+    "width": 42,
+    "valence": "dark",
+    "vault": "vault.jsonl",
+    "board": [
+      "",
+      "IT IS SPOKEN.",
+      "TAKE YOUR BILL."
+    ],
+    "hold": 8
+  }
+}

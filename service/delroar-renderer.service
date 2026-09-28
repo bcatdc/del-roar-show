@@ -1,0 +1,19 @@
+[Unit]
+Description=Del Roar renderer (screen, board, inputs)
+PartOf=delroar.target
+After=pipewire.service
+
+# keep retrying forever: no giving up after a few fast failures at boot
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=%h/delroar
+Environment=SDL_VIDEODRIVER=kmsdrm
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 renderer.py --clips clips3 --audio audio --idle idle_a
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=delroar.target
