@@ -5,3 +5,4 @@ numpy>=1.26
 
 pygame-ce>=2.5
 Pillow>=10
+moderngl>=5.10
