@@ -24,7 +24,6 @@ import ctypes.util
 import json
 import math
 import os
-import sys
 import time
 
 import numpy as np
@@ -33,7 +32,7 @@ import pygame
 import pygame.freetype
 
 from board import Board, CHARSET, NCHAR, BLOCK
-from control import ControlServer, DEFAULT_SOCKET, HAS_UNIX
+from control import ControlServer, DEFAULT_SOCKET
 
 # ---------------------------------------------------------------------------
 # SCREEN
@@ -124,6 +123,15 @@ FLAP_SOUND = True
 FLAP_DEVICE = None                     # None = default device; or an SDL device name string
 FLAP_VOLUME = 0.55                     # master gain, as in flapboard.html
 FLAP_VOICES = 12                       # simultaneous clicks before they start cutting each other
+
+# TICKET ON SCREEN - when local.json says TICKET_MODE screen or both, or a print
+# fails, show.py sends the ticket image and it is laid over the picture here
+TICKET_WIDTH = 0.70                    # fraction of screen width
+TICKET_CENTRE_Y = 0.57                 # where its middle sits, as a fraction of height
+TICKET_MAX_H = 0.72                    # never taller than this fraction of height
+TICKET_PAPER = (0.97, 0.94, 0.86)      # white becomes this: paper, not a lit screen
+TICKET_DIM = 0.55                      # how far the picture behind darkens
+TICKET_FADE = 0.6                      # seconds in and out
 
 # BOARD TEXTURE detail
 TILE_W, TILE_H = 192, 300              # glyph atlas tile; 2x the on-screen cell is plenty
@@ -261,6 +269,116 @@ out vec4 frag;
 uniform sampler2D tex;
 void main() { frag = texture(tex, uv); }
 """
+
+
+TICKET_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag;
+uniform sampler2D tex;
+uniform vec3 paper;
+uniform float alpha;
+void main() { frag = vec4(texture(tex, uv).rrr * paper, alpha); }
+"""
+
+# the dim layer has no texture, so no UVs at all: a shader that declares an input
+# it never uses may have it compiled away, and then the attribute can't be bound
+DIM_VERT = """
+#version 330
+in vec2 in_pos;
+void main() { gl_Position = vec4(in_pos, 0.0, 1.0); }
+"""
+
+DIM_FRAG = """
+#version 330
+out vec4 frag;
+uniform float alpha;
+void main() { frag = vec4(0.0, 0.0, 0.0, alpha); }
+"""
+
+
+def ticket_rect(comp, img_w, img_h):
+    """Where the ticket goes in the composition, in pixels: x0, y0, x1, y1."""
+    cw, ch = comp
+    w = cw * TICKET_WIDTH
+    h = w * img_h / img_w
+    if h > ch * TICKET_MAX_H:
+        h = ch * TICKET_MAX_H
+        w = h * img_w / img_h
+    cy = ch * TICKET_CENTRE_Y
+    y0 = min(max(cy - h / 2, 0), ch - h)
+    x0 = (cw - w) / 2
+    return x0, y0, x0 + w, y0 + h
+
+
+class TicketOverlay:
+    """The Bill of Exchange shown on screen, over a dimmed picture. It fades in,
+    stays for the hold, and fades out; a new visitor's handset clears it early."""
+
+    def __init__(self, ctx, comp):
+        self.ctx, self.comp = ctx, comp
+        self.prog = ctx.program(vertex_shader=VIDEO_VERT, fragment_shader=TICKET_FRAG)
+        self.dim_prog = ctx.program(vertex_shader=DIM_VERT, fragment_shader=DIM_FRAG)
+        full = np.array([-1, 1, 1, 1, 1, -1, -1, 1, 1, -1, -1, -1], dtype="f4")
+        self.dim_vao = ctx.vertex_array(
+            self.dim_prog, [(ctx.buffer(full), "2f", "in_pos")])
+        self.tex = self.vao = None
+        self.alpha, self.target, self.until = 0.0, 0.0, None
+
+    @staticmethod
+    def _load(path):
+        """Pixels bottom row first, as OpenGL wants them."""
+        try:
+            from PIL import Image
+            img = Image.open(path).convert("L").transpose(Image.FLIP_TOP_BOTTOM)
+            return img.size, 1, img.tobytes()
+        except ImportError:
+            surf = pygame.image.load(path)
+            to = getattr(pygame.image, "tobytes", None) or pygame.image.tostring
+            return surf.get_size(), 3, to(surf, "RGB", True)
+
+    def show(self, path, hold=None):
+        (w, h), comps, data = self._load(path)
+        if self.tex is not None:
+            self.tex.release()
+        self.tex = self.ctx.texture((w, h), comps, data)
+        self.tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        x0, y0, x1, y1 = ticket_rect(self.comp, w, h)
+        cw, ch = self.comp
+        X0, X1 = x0 / cw * 2 - 1, x1 / cw * 2 - 1
+        Y0, Y1 = 1 - y0 / ch * 2, 1 - y1 / ch * 2
+        quad = np.array([X0, Y0, 0, 1, X1, Y0, 1, 1, X1, Y1, 1, 0,
+                         X0, Y0, 0, 1, X1, Y1, 1, 0, X0, Y1, 0, 0], dtype="f4")
+        if self.vao is not None:
+            self.vao.release()
+        self.vao = self.ctx.vertex_array(self.prog, [(self.ctx.buffer(quad), "2f 2f",
+                                                      "in_pos", "in_uv")])
+        self.target = 1.0
+        self.until = time.monotonic() + float(hold) if hold else None
+
+    def hide(self):
+        self.target, self.until = 0.0, None
+
+    def update(self, dt):
+        if self.until is not None and time.monotonic() >= self.until:
+            self.hide()
+        step = dt / TICKET_FADE if TICKET_FADE > 0 else 1.0
+        if self.alpha < self.target:
+            self.alpha = min(self.target, self.alpha + step)
+        elif self.alpha > self.target:
+            self.alpha = max(self.target, self.alpha - step)
+
+    def draw(self):
+        if self.alpha <= 0 or self.vao is None:
+            return
+        self.ctx.enable(moderngl.BLEND)
+        self.dim_prog["alpha"].value = self.alpha * TICKET_DIM
+        self.dim_vao.render(moderngl.TRIANGLES)
+        self.tex.use(0)
+        self.prog["tex"].value = 0
+        self.prog["paper"].value = TICKET_PAPER
+        self.prog["alpha"].value = self.alpha
+        self.vao.render(moderngl.TRIANGLES)
 
 
 SHADE_DEPTH = 0.45 if PALETTE not in ("paper", "carnival") else 0.22
@@ -880,6 +998,9 @@ def video_rect(board_bottom):
     return (rect[0] + dx, rect[1] + dy, rect[2] + dx, rect[3] + dy)
 
 
+SHOW_SETTINGS = {"TICKET_MODE", "TICKET_SCREEN_HOLD"}   # in local.json, but read by show.py
+
+
 def load_local_settings(path="local.json"):
     """Per-machine settings, kept out of version control.
 
@@ -900,6 +1021,8 @@ def load_local_settings(path="local.json"):
         return {}
     applied = {}
     for key, value in settings.items():
+        if key in SHOW_SETTINGS:
+            continue                        # show.py's, not ours
         if key.isupper() and key in globals():
             globals()[key] = value
             applied[key] = value
@@ -999,6 +1122,7 @@ def main():
         video.light = light
     light_rng = np.random.default_rng(7)
 
+    ticket_layer = TicketOverlay(ctx, comp)
     knob = Knob(board)
     inputs = Inputs(toggle=a.toggle_keys)
     sfx = FlapSound() if (FLAP_SOUND and not a.mute) else None
@@ -1104,6 +1228,15 @@ def main():
                 elif kind == "utterance":
                     # the STT process talks to the renderer; pass it on to show logic
                     server.emit({"event": "utterance", "text": cmd.get("text", "")})
+                elif kind == "ticket":
+                    if cmd.get("off"):
+                        ticket_layer.hide()
+                    else:
+                        try:
+                            ticket_layer.show(cmd["path"], cmd.get("hold"))
+                        except (OSError, ValueError, pygame.error) as e:
+                            server.emit({"event": "error", "message": f"ticket image: {e}"})
+                            print(f"[renderer] ticket image: {e}")
                 elif kind == "quit":
                     running = False
                 else:
@@ -1158,6 +1291,7 @@ def main():
             demo_next = now + 5.0
 
         light.update(dt)
+        ticket_layer.update(dt)
         clicks = board.update(dt)
         if sfx:
             sfx.play(clicks)
@@ -1173,6 +1307,7 @@ def main():
         if video:
             video.draw()
         boardr.draw()
+        ticket_layer.draw()
         if rotator:
             rotator.blit()
         pygame.display.flip()

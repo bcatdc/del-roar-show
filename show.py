@@ -34,6 +34,17 @@ until speech arrives), and "bed" / "bed_fade" for the vamp. Knob steps take
 
 Hanging up at any point plays the sleep clip, if the script names one, then
 returns to attract.
+
+Fields: a listen step's "field" keeps its answer under that name: name, age, and
+hope / fear for the two answers that can be traded. A choose step with a "field"
+and "value_left" / "value_right" keeps the value for the side turned to; the
+trade step uses "field": "valence" with values light / dark, and the ticket then
+takes the hope for light or the fear for dark. An older "trade" field still works.
+
+Where the ticket goes is a per-machine choice, so it lives in local.json:
+  "TICKET_MODE": "print" | "screen" | "both"     (default print)
+  "TICKET_SCREEN_HOLD": seconds on screen         (default 20)
+With print, a ticket that fails to print is shown on screen instead.
 """
 import argparse
 import json
@@ -43,9 +54,36 @@ import sys
 import time
 
 BED_FADE = 0.8
+
+# per-machine, from local.json (see the docstring)
+TICKET_MODE = "print"
+TICKET_SCREEN_HOLD = 20
+SCREEN_TICKET = "screen_ticket.png"
+
+
+def load_local_settings(path="local.json"):
+    """The show's own keys from local.json. The renderer reads the same file for
+    its settings; each takes only what it knows and leaves the rest alone."""
+    global TICKET_MODE, TICKET_SCREEN_HOLD
+    if not os.path.isfile(path):
+        return
+    try:
+        with open(path) as f:
+            s = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"[show] ignoring {path}: {e}")
+        return
+    mode = str(s.get("TICKET_MODE", TICKET_MODE)).lower()
+    if mode not in ("print", "screen", "both"):
+        print(f"[show] TICKET_MODE {mode!r} is not print, screen or both; using print")
+        mode = "print"
+    TICKET_MODE = mode
+    TICKET_SCREEN_HOLD = float(s.get("TICKET_SCREEN_HOLD", TICKET_SCREEN_HOLD))
+    print(f"[show] ticket mode: {TICKET_MODE}")
 TICKET_DEFAULTS = {"enabled": True, "printer": "file:ticket.out", "width": 42,
-                   "vault": "vault.jsonl", "valence": "dark",
-                   "board": ["", "IT IS SPOKEN.", "TAKE YOUR BILL."], "hold": 8}
+                   "vault": "vault.jsonl", "valence": "dark", "style": "text",
+                   "board": ["", "IT IS SPOKEN.", "TAKE YOUR BILL."], "hold": 8,
+                   "delay": 0}          # seconds into the step before it prints
 
 
 def wrap(text, cols=20, rows=2):
@@ -76,6 +114,7 @@ class Show:
         self.answers = {}
         self.fields = {}                     # name / age / trade, from step "field" tags
         self.missing_clips = set()           # reported by the renderer; fall back rather than wait
+        self.ticket_at = None                # when a delayed ticket is due
         self.ticket_cfg = {**TICKET_DEFAULTS, **script.get("ticket", {})}
         self.pending_answer = None
         self.buf = b""
@@ -126,36 +165,89 @@ class Show:
         self.send({"cmd": "stt", "on": on})
 
     # ---------------- attract ----------------
+    def trade_answer(self):
+        """What this visitor is giving up, and which half of their future it is."""
+        f = self.fields
+        valence = f.get("valence") or self.ticket_cfg.get("valence", "dark")
+        answer = f.get("hope" if valence == "light" else "fear") or f.get("trade")
+        return answer, valence
+
     def print_ticket(self):
-        """Compose and print the Bill of Exchange. A printer that is missing, jammed
-        or unplugged must never stop the show, so everything here is guarded."""
+        """Compose the Bill of Exchange, then print it, show it, or both. A printer
+        that is missing, jammed or unplugged must never stop the show, so
+        everything here is guarded, and a failed print falls back to the screen."""
         cfg = self.ticket_cfg
         if not cfg.get("enabled", True):
             return
-        answer = self.fields.get("trade") or (list(self.answers.values()) or [None])[-1]
+        answer, valence = self.trade_answer()
         if not answer:
             print("[show] no answer to put on a ticket")
             return
         try:
             import ticket
-            lines = ticket.issue(answer, cfg.get("valence", "dark"),
-                                 self.fields.get("name"), self.fields.get("age"),
-                                 path=cfg.get("vault", "vault.jsonl"))
-            text = ticket.render(lines, int(cfg.get("width", 42)))
-            with open("last_ticket.txt", "w") as f:       # always, for looking at later
-                f.write(text + "\n")
-            print("[show] ticket:\n" + text)
-            print("[show] " + ticket.send(text, cfg.get("printer", "file:ticket.out")))
-        except Exception as e:                            # printer trouble is not show trouble
+            # the exchange happens once, whatever the ticket is printed on
+            parts = ticket.issue_parts(answer, valence, self.fields.get("name"),
+                                       self.fields.get("age"),
+                                       path=cfg.get("vault", "vault.jsonl"))
+        except Exception as e:
             print(f"[show] ticket failed: {type(e).__name__}: {e}")
+            return
+        print(f"[show] ticket ({valence}): {parts['fortune']}")
+        on_screen = TICKET_MODE in ("screen", "both")
+        if TICKET_MODE in ("print", "both"):
+            if not self.send_to_printer(parts, cfg) and not on_screen:
+                print("[show] showing the ticket on screen instead")
+                on_screen = True
+        if on_screen:
+            self.show_on_screen(parts, cfg)
         if cfg.get("board"):
             self.board(cfg["board"], cfg.get("hold"))
+
+    def send_to_printer(self, parts, cfg):
+        """True if the bytes went out. The printer can still fail after that
+        without saying so (no paper, a jam); that is what screen mode is for."""
+        target = cfg.get("printer", "file:ticket.out")
+        try:
+            import ticket
+            if cfg.get("style") == "image":
+                import ticket_art
+                img = ticket_art.draw_ticket(parts["fortune"], parts["bearer"], parts["prior"],
+                                             ratio=cfg.get("ratio", ticket_art.RATIO))
+                img.save("last_ticket.png")              # always, for looking at later
+                print("[show] " + ticket.send_raw(ticket_art.raster_bytes(img), target))
+            else:
+                lines = list(ticket.HEADER) + ["", parts["fortune"], ""]
+                lines += [p for p in (parts["bearer"], parts["prior"]) if p]
+                text = ticket.render(lines + ["", ticket.FINE_PRINT], int(cfg.get("width", 42)))
+                with open("last_ticket.txt", "w") as f:
+                    f.write(text + "\n")
+                print("[show] " + ticket.send(text, target))
+            return True
+        except Exception as e:                            # printer trouble is not show trouble
+            print(f"[show] print failed: {type(e).__name__}: {e}")
+            return False
+
+    def show_on_screen(self, parts, cfg):
+        """Draw the ticket as the printer would, without the paper-walk margin or
+        the upside-down flip, and have the renderer lay it over the picture."""
+        try:
+            import ticket_art
+            img = ticket_art.draw_ticket(parts["fortune"], parts["bearer"], parts["prior"],
+                                         ratio=cfg.get("ratio", ticket_art.RATIO),
+                                         margin=0, flip=False)
+            path = os.path.abspath(SCREEN_TICKET)
+            img.convert("L").save(path)
+        except Exception as e:
+            print(f"[show] screen ticket failed: {type(e).__name__}: {e}")
+            return
+        self.send({"cmd": "ticket", "path": path, "hold": TICKET_SCREEN_HOLD})
 
     def attract(self, first=False):
         """Back to the powered-down state. From mid-show, via the sleep clip."""
         was_running = self.i is not None
         self.i, self.pending_answer = None, None
         self.fields = {}
+        self.ticket_at = None                # a pending ticket does not survive a reset
         self.mic(False)
         self.send({"cmd": "knob", "off": True})
         self.send({"cmd": "audio", "stop": True, "fade_out": BED_FADE})
@@ -182,6 +274,11 @@ class Show:
         self.cycle_at = time.monotonic() + float(self.attract_cfg.get("every", 6.0))
 
     def tick(self):
+        if self.ticket_at is not None and time.monotonic() >= self.ticket_at:
+            self.ticket_at = None
+            self.print_ticket()
+            if self.step and self.step["type"] == "ticket":
+                self.enter(self.i + 1)
         if self.i is None and time.monotonic() >= self.cycle_at and \
                 len(self.attract_cfg.get("cycle") or []) > 1:
             self._attract_board()
@@ -196,9 +293,17 @@ class Show:
         self.light(s.get("light"))
         if s["type"] != "listen":
             self.mic(False)
+        self.ticket_at = None
         if s.get("ticket") or s["type"] == "ticket":
-            self.print_ticket()
-            if s["type"] == "ticket":
+            # a delay lets the clip get somewhere before the mechanism starts up,
+            # so the printing lands under the right line rather than the first
+            wait = float(s.get("ticket_delay", self.ticket_cfg.get("delay", 0)) or 0)
+            if wait > 0:
+                self.ticket_at = time.monotonic() + wait
+                print(f"       ticket in {wait:.0f}s")
+            else:
+                self.print_ticket()
+            if s["type"] == "ticket" and wait <= 0:
                 return self.enter(self.i + 1)
 
         if s["type"] == "play":
@@ -277,6 +382,7 @@ class Show:
         if kind == "input" and ev["name"] == "handset":
             if ev["state"] == "up" and self.i is None:
                 self.going_to_sleep = False
+                self.send({"cmd": "ticket", "off": True})   # the last visitor's, if still up
                 self.enter(0)
             elif ev["state"] == "down" and self.i is not None:
                 print("[show] handset down; resetting")
@@ -318,7 +424,12 @@ class Show:
                       + f": {self.pending_answer!r}")
             if s["type"] == "choose":
                 self.answers[s["id"]] = ev.get("label")
-                print(f"[show] chose for {s['id']}: {ev.get('label')!r}")
+                value = s.get("value_" + ev["side"])
+                if s.get("field") and value is not None:  # e.g. valence: light / dark
+                    self.fields[s["field"]] = value
+                print(f"[show] chose for {s['id']}: {ev.get('label')!r}"
+                      + (f" ({s['field']} = {value})" if s.get("field") and value is not None
+                         else ""))
             self.follow(s.get("on_" + ev["side"], "next"))
 
 
@@ -361,8 +472,11 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--script", default="show_script.json")
     ap.add_argument("--trace", action="store_true")
+    ap.add_argument("--settings", default="local.json",
+                    help="per-machine settings file, shared with the renderer")
     a = ap.parse_args()
 
+    load_local_settings(a.settings)
     if not os.path.isfile(a.script):
         sys.exit(f"no script at {a.script}")
     script = json.load(open(a.script))

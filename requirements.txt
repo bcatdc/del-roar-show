@@ -6,3 +6,7 @@ moderngl>=5.10
 mpv>=1.0.7
 sounddevice>=0.4.6
 faster-whisper>=1.0
+
+# tickets
+Pillow>=10
+pyusb>=1.2

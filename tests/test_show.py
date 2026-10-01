@@ -147,3 +147,61 @@ def test_a_minor_is_not_named_in_the_vault(tmp_path):
         assert rows and all(r["name"] is None for r in rows if r.get("age") == 15)
     finally:
         proc.terminate()
+
+
+VALENCE_SCRIPT = {
+    "idle": ["idle_a"],
+    "steps": [
+        {"id": "ask_hope", "type": "listen", "field": "hope",
+         "knob": {"left": "SAY IT AGAIN", "right": "LET IT STAND"}, "on_right": "next"},
+        {"id": "ask_fear", "type": "listen", "field": "fear",
+         "knob": {"left": "SAY IT AGAIN", "right": "LET IT STAND"}, "on_right": "next"},
+        {"id": "trade", "type": "choose", "field": "valence",
+         "knob": {"left": "BRIGHT MOMENT", "right": "DARK MOMENT"},
+         "value_left": "light", "value_right": "dark"},
+        {"id": "closing", "type": "play", "clip": "segment_7", "ticket": True},
+        {"id": "done", "type": "end"},
+    ],
+    "ticket": {"printer": "file:ticket.out"},
+}
+
+
+def run_trade(tmp_path, side, local=None, script=VALENCE_SCRIPT):
+    if local is not None:
+        (tmp_path / "local.json").write_text(json.dumps(local))
+    srv, proc = start_show(tmp_path, script)
+    try:
+        cmds(srv, 0.8)
+        srv.emit({"event": "input", "name": "handset", "state": "up"})
+        cmds(srv)
+        answer(srv, "a trip to the sea")
+        answer(srv, "the dentist")
+        srv.emit({"event": "activated", "side": side})
+        return cmds(srv, 0.8)
+    finally:
+        proc.terminate()
+
+
+def vault_rows(tmp_path):
+    return [json.loads(l) for l in (tmp_path / "vault.jsonl").read_text().splitlines() if l]
+
+
+def test_the_trade_gives_up_the_half_that_was_chosen(tmp_path):
+    run_trade(tmp_path, "left")                   # BRIGHT MOMENT
+    rows = vault_rows(tmp_path)
+    assert [(r["text"], r["valence"]) for r in rows] == [("a trip to the sea", "light")]
+    assert rows[0]["moderated"] is False
+
+
+def test_screen_mode_shows_the_ticket_and_does_not_print(tmp_path):
+    out = run_trade(tmp_path, "right", local={"TICKET_MODE": "screen"})
+    shown = [c for c in out if c["cmd"] == "ticket" and not c.get("off")]
+    assert shown and os.path.isfile(shown[0]["path"])
+    assert not (tmp_path / "ticket.out").exists()
+    assert vault_rows(tmp_path)[0]["valence"] == "dark"
+
+
+def test_a_failed_print_falls_back_to_the_screen(tmp_path):
+    script = {**VALENCE_SCRIPT, "ticket": {"printer": "nonsense:here"}}
+    out = run_trade(tmp_path, "right", script=script)
+    assert any(c["cmd"] == "ticket" and not c.get("off") for c in out)

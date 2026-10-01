@@ -16,6 +16,8 @@ Printing (set PRINTER below, or pass --printer):
   dev:<path>      straight to a printer device, e.g. dev:/dev/usb/lp0
   usb:<vid>:<pid> straight over USB, finding the printer's own endpoint,
                   e.g. usb:0x154f:0x154f   (needs pyusb; no python-escpos)
+  windows:<name>  through the Windows print queue, raw, e.g.
+                  windows:BK-C310(U)1      (Windows only; nothing to install)
   escpos:usb:<vendor>:<product>   via python-escpos, e.g. escpos:usb:0x0416:0x5011
   escpos:serial:<port>            e.g. escpos:serial:/dev/ttyUSB0
   none            compose only
@@ -63,12 +65,12 @@ FRAMES = {
 
 # Enough in the vault that the first visitor of the day still receives something.
 SEED = [
-    {"text": "the last train home", "valence": "dark", "name": "MARGUERITE", "age": 61},
-    {"text": "a door left unlocked", "valence": "dark", "name": "OSCAR", "age": 34},
-    {"text": "the quiet after the phone rings", "valence": "dark", "name": "INES", "age": 52},
-    {"text": "a letter that was never sent", "valence": "light", "name": "HOLLIS", "age": 29},
-    {"text": "a box of old tapes", "valence": "light", "name": "DELPHINE", "age": 71},
-    {"text": "the summer they all came back", "valence": "light", "name": "AUGUST", "age": 46},
+    {"text": "the last train home", "valence": "dark", "name": "MARGUERITE", "age": 61, "moderated": True},
+    {"text": "a door left unlocked", "valence": "dark", "name": "OSCAR", "age": 34, "moderated": True},
+    {"text": "the quiet after the phone rings", "valence": "dark", "name": "INES", "age": 52, "moderated": True},
+    {"text": "a letter that was never sent", "valence": "light", "name": "HOLLIS", "age": 29, "moderated": True},
+    {"text": "a box of old tapes", "valence": "light", "name": "DELPHINE", "age": 71, "moderated": True},
+    {"text": "the summer they all came back", "valence": "light", "name": "AUGUST", "age": 46, "moderated": True},
 ]
 
 NUMBER_WORDS = {w: i for i, w in enumerate(
@@ -182,23 +184,26 @@ def vault_load(path=VAULT):
     return rows
 
 
-def vault_add(text, valence, name, age, path=VAULT):
+def vault_add(text, valence, name, age, path=VAULT, moderated=False):
     """What this visitor gave up, for someone else to receive. A minor's name is
     not written down at all: they are only ever read back as a prior holder, where
     the name would be withheld anyway, so there is no reason to keep it."""
     n = parse_age(age)
     keep_name = None if is_minor(age) else clean_name(name)
     row = {"text": text, "valence": valence, "name": keep_name,
-           "age": n, "t": time.strftime("%Y-%m-%dT%H:%M:%S")}
+           "age": n, "t": time.strftime("%Y-%m-%dT%H:%M:%S"),
+           "moderated": moderated}           # False until reviewed: see --review
     with open(path, "a") as f:
         f.write(json.dumps(row) + "\n")
     return row
 
 
 def vault_draw(valence, exclude_text=None, path=VAULT, rng=random):
-    """Someone else's answer of the same valence."""
+    """Someone else's answer of the same valence. Only answers approved in review
+    are ever handed out; everything else waits, and "rejected" never goes."""
     pool = [r for r in vault_load(path)
-            if r.get("valence") == valence and r.get("text") != exclude_text]
+            if r.get("valence") == valence and r.get("text") != exclude_text
+            and r.get("moderated") is True]
     return rng.choice(pool) if pool else None
 
 
@@ -215,14 +220,108 @@ def who(name, age, as_prior=False):
     return f"{clean}, {n}" if n is not None else clean
 
 
-def issue(answer, valence, bearer_name=None, bearer_age=None, path=VAULT, rng=random):
-    """The whole exchange: take this visitor's answer in, give a stranger's out."""
+def issue_parts(answer, valence, bearer_name=None, bearer_age=None, path=VAULT,
+                rng=random):
+    """The whole exchange, as its pieces: take this visitor's answer in, give a
+    stranger's out. Returns the fortune and the two holder lines, so either the
+    text ticket or the printed one can lay them out."""
     donor = vault_draw(valence, exclude_text=answer, path=path, rng=rng)
     if donor is None:
         donor = {"text": answer, "name": None, "age": None}
     vault_add(answer, valence, bearer_name, bearer_age, path=path)
-    return compose(donor["text"], valence, who(bearer_name, bearer_age),
-                   who(donor.get("name"), donor.get("age"), as_prior=True), rng=rng)
+    frame = rng.choice(FRAMES["dark" if valence == "dark" else "light"])
+    body = frame.format(x=normalise(donor["text"])).upper()
+    bearer = who(bearer_name, bearer_age)
+    prior = who(donor.get("name"), donor.get("age"), as_prior=True)
+    return {"fortune": body,
+            "bearer": f"BEARER: {bearer}" if bearer else None,
+            "prior": f"PRIOR HOLDER: {prior}" if prior else None}
+
+
+def issue(answer, valence, bearer_name=None, bearer_age=None, path=VAULT, rng=random):
+    """The whole exchange as ticket lines, for the plain text ticket."""
+    parts = issue_parts(answer, valence, bearer_name, bearer_age, path, rng)
+    lines = list(HEADER) + ["", parts["fortune"], ""]
+    for key in ("bearer", "prior"):
+        if parts[key]:
+            lines.append(parts[key])
+    return lines + ["", FINE_PRINT]
+
+
+# ---------------- review ----------------
+def _key(r):
+    return (r.get("t"), r.get("text"), r.get("valence"))
+
+
+def review(path=VAULT, ask=input):
+    """Walk the answers nobody has looked at yet: a approves, r rejects, s skips,
+    q stops. Nothing is handed to a stranger until it is approved here.
+
+    The show may append while this runs, so the file is read again just before
+    writing and the decisions are applied to whatever is there by then; a new
+    answer that arrived in the meantime is kept, unreviewed."""
+    if not os.path.isfile(path):
+        print(f"no vault at {path}")
+        return
+    rows, bad = _read_rows(path)
+    if bad:
+        print(f"note: {bad} line(s) in {path} are not valid JSON and are being skipped; "
+              "they will be written back unchanged")
+    pending = [r for r in rows if r.get("moderated") is not True
+               and r.get("moderated") != "rejected"]
+    if not pending:
+        print("nothing waiting for review")
+        return
+    print(f"{len(pending)} waiting. a = approve, r = reject, s = skip, q = stop\n")
+    decisions = {}
+    for i, r in enumerate(pending, 1):
+        holder = who(r.get("name"), r.get("age")) or "-"
+        print(f"[{i}/{len(pending)}] {r.get('valence', '?'):5s}  {r.get('text', '')!r}  ({holder})")
+        while True:
+            c = (ask("  a/r/s/q > ") or "").strip().lower()[:1]
+            if c in ("a", "r", "s", "q"):
+                break
+        if c == "q":
+            break
+        if c == "a":
+            decisions[_key(r)] = True
+        elif c == "r":
+            decisions[_key(r)] = "rejected"
+    if not decisions:
+        print("no changes")
+        return
+    # read again, apply, and swap the file in one step so the show never sees half
+    fresh_lines = open(path, encoding="utf-8").read().splitlines()
+    out = []
+    for line in fresh_lines:
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            out.append(line)                  # leave anything unreadable as it was
+            continue
+        if _key(r) in decisions:
+            r["moderated"] = decisions[_key(r)]
+        out.append(json.dumps(r))
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        f.write("\n".join(out) + "\n")
+    os.replace(tmp, path)
+    ok = sum(1 for v in decisions.values() if v is True)
+    print(f"approved {ok}, rejected {len(decisions) - ok}")
+
+
+def _read_rows(path):
+    rows, bad = [], 0
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                bad += 1
+    return rows, bad
 
 
 # ---------------- printing ----------------
@@ -240,13 +339,35 @@ def escpos_bytes(text, cut=True, feed=4):
     return data
 
 
+def usb_find(vendor, product):
+    """Find the printer. On Windows pyusb needs libusb-1.0.dll, which Windows does
+    not ship; the libusb-package wheel carries one, so use it when it is there.
+    (pip install libusb-package)"""
+    import usb.core
+    try:
+        import libusb_package
+        dev = libusb_package.find(idVendor=vendor, idProduct=product)
+    except ImportError:
+        try:
+            dev = usb.core.find(idVendor=vendor, idProduct=product)
+        except usb.core.NoBackendError:
+            raise OSError("pyusb has no libusb to work with. On Windows: "
+                          "pip install libusb-package") from None
+    if dev is None:
+        raise OSError(f"printer {vendor:#06x}:{product:#06x} not found. On Windows the "
+                      "vendor driver hides it from libusb unless Zadig has replaced it "
+                      "with WinUSB; otherwise use windows:<printer name>.")
+    return dev
+
+
 def usb_probe(vendor, product):
     """What the printer offers: configurations, interfaces and endpoints. python-escpos
     assumes endpoint 0x01, which many printers do not use."""
-    import usb.core
-    dev = usb.core.find(idVendor=vendor, idProduct=product)
-    if dev is None:
-        return f"no device {vendor:#06x}:{product:#06x}"
+    import usb.util
+    try:
+        dev = usb_find(vendor, product)
+    except OSError as e:
+        return str(e)
     lines = [f"device {vendor:#06x}:{product:#06x}"]
     for cfg in dev:
         lines.append(f"  configuration {cfg.bConfigurationValue}")
@@ -266,9 +387,7 @@ def usb_send(data, vendor, product):
     """Write ESC/POS bytes to the printer's first bulk OUT endpoint."""
     import usb.core
     import usb.util
-    dev = usb.core.find(idVendor=vendor, idProduct=product)
-    if dev is None:
-        raise OSError(f"printer {vendor:#06x}:{product:#06x} not found")
+    dev = usb_find(vendor, product)
     try:
         if dev.is_kernel_driver_active(0):
             dev.detach_kernel_driver(0)      # usblp may have claimed it
@@ -300,9 +419,10 @@ def usb_status(vendor, product):
     which is exactly when nothing comes out and nothing is reported."""
     import usb.core
     import usb.util
-    dev = usb.core.find(idVendor=vendor, idProduct=product)
-    if dev is None:
-        return f"no device {vendor:#06x}:{product:#06x}"
+    try:
+        dev = usb_find(vendor, product)
+    except OSError as e:
+        return str(e)
     try:
         if dev.is_kernel_driver_active(0):
             dev.detach_kernel_driver(0)
@@ -316,9 +436,9 @@ def usb_status(vendor, product):
     intf = cfg[(0, 0)]
     out = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint_direction(
         e.bEndpointAddress) == usb.util.ENDPOINT_OUT)
-    inp = usb.util.find_descriptor(intf, custom_match=lambda e: usb.util.endpoint_direction(
-        e.bEndpointAddress) == usb.util.ENDPOINT_IN)
-    if inp is None:
+    ins = [e for e in intf if usb.util.endpoint_direction(e.bEndpointAddress)
+           == usb.util.ENDPOINT_IN]
+    if not ins:
         return "this printer has no IN endpoint, so it cannot answer a status query"
     meanings = {
         1: [(0x04, "drawer/feed"), (0x08, "OFFLINE"), (0x20, "cover open"),
@@ -333,18 +453,85 @@ def usb_status(vendor, product):
     for n, bits in meanings.items():
         try:
             out.write(bytes([0x10, 0x04, n]), timeout=2000)
-            reply = bytes(inp.read(8, timeout=2000))
         except usb.core.USBError as e:
-            report.append(f"  status {n}: no answer ({e.strerror or e})")
+            report.append(f"  status {n}: could not ask ({e.strerror or e})")
             continue
-        if not reply:
-            report.append(f"  status {n}: empty answer")
-            continue
-        byte = reply[0]
-        flags = [name for mask, name in bits if byte & mask == mask]
-        report.append(f"  status {n}: {byte:#04x}" + (f"  -> {', '.join(flags)}" if flags else "  -> ok"))
+        answered = False
+        for inp in ins:                       # printers differ in which one answers
+            try:
+                reply = bytes(inp.read(8, timeout=1500))
+            except usb.core.USBError:
+                continue
+            if not reply:
+                continue
+            answered = True
+            byte = reply[0]
+            # a real status byte always has bit0 clear, bit1 set and bit7 clear
+            valid = (byte & 0x01) == 0 and (byte & 0x02) == 0x02 and (byte & 0x80) == 0
+            flags = [name for mask, name in bits if byte & mask == mask]
+            report.append(f"  status {n} from {inp.bEndpointAddress:#04x}: {byte:#04x}"
+                          + ("" if valid else "  (not a status byte; wrong channel?)")
+                          + (f"  -> {', '.join(flags)}" if valid and flags else
+                             "  -> ok" if valid else ""))
+        if not answered:
+            report.append(f"  status {n}: no answer on any IN endpoint")
     usb.util.dispose_resources(dev)
     return "\n".join(report)
+
+
+def windows_send(data, printer_name):
+    """Hand raw bytes to a Windows printer queue. The spooler passes them through
+    untouched with the RAW datatype, so the printer still sees plain ESC/POS. This
+    is the way in on Windows, where the vendor driver owns the USB device and
+    libusb cannot open it."""
+    import ctypes
+    from ctypes import wintypes
+
+    winspool = ctypes.WinDLL("winspool.drv")
+
+    class DOCINFO(ctypes.Structure):
+        _fields_ = [("pDocName", wintypes.LPWSTR),
+                    ("pOutputFile", wintypes.LPWSTR),
+                    ("pDatatype", wintypes.LPWSTR)]
+
+    handle = wintypes.HANDLE()
+    if not winspool.OpenPrinterW(printer_name, ctypes.byref(handle), None):
+        raise OSError(f"can't open printer {printer_name!r}: "
+                      f"error {ctypes.GetLastError()} (is the name exactly right?)")
+    try:
+        info = DOCINFO("Del Roar ticket", None, "RAW")
+        job = winspool.StartDocPrinterW(handle, 1, ctypes.byref(info))
+        if not job:
+            raise OSError(f"the printer refused the job: error {ctypes.GetLastError()}")
+        winspool.StartPagePrinter(handle)
+        written = wintypes.DWORD()
+        winspool.WritePrinter(handle, data, len(data), ctypes.byref(written))
+        winspool.EndPagePrinter(handle)
+        winspool.EndDocPrinter(handle)
+    finally:
+        winspool.ClosePrinter(handle)
+    return f"sent {written.value} bytes to {printer_name!r} via the Windows spooler"
+
+
+def send_raw(data, target=PRINTER):
+    """Send bytes that are already ESC/POS - the image ticket builds its own."""
+    kind, _, rest = target.partition(":")
+    if kind == "none":
+        return "not printed"
+    if kind == "file":
+        with open(rest or "ticket.out", "wb") as f:
+            f.write(data)
+        return f"wrote {rest or 'ticket.out'} ({len(data)} bytes)"
+    if kind == "dev":
+        with open(rest, "wb") as f:
+            f.write(data)
+        return f"sent to {rest}"
+    if kind == "usb":
+        vendor, product = (int(x, 16) for x in rest.split(":"))
+        return usb_send(data, vendor, product)
+    if kind == "windows":
+        return windows_send(data, rest)
+    raise ValueError(f"unknown printer target: {target}")
 
 
 def send(text, target=PRINTER):
@@ -359,6 +546,8 @@ def send(text, target=PRINTER):
         with open(rest, "wb") as f:
             f.write(escpos_bytes(text))
         return f"sent to {rest}"
+    if kind == "windows":
+        return windows_send(escpos_bytes(text), rest)
     if kind == "usb":
         vendor, product = (int(x, 16) for x in rest.split(":"))
         return usb_send(escpos_bytes(text), vendor, product)
@@ -395,6 +584,8 @@ def main():
     ap.add_argument("--demo", action="store_true", help="one of each valence")
     ap.add_argument("--selftest", action="store_true", help="every frame, sample answers")
     ap.add_argument("--vault", action="store_true", help="list the vault")
+    ap.add_argument("--review", action="store_true",
+                    help="approve or reject visitors' answers, one at a time")
     ap.add_argument("--probe", metavar="VID:PID",
                     help="list a USB printer's endpoints, e.g. --probe 0x154f:0x154f")
     ap.add_argument("--status", metavar="VID:PID",
@@ -418,6 +609,9 @@ def main():
         vendor, product = (int(x, 16) for x in a.probe.split(":"))
         print(usb_probe(vendor, product))
         return
+
+    if a.review:
+        return review(a.vault_file)
 
     if a.vault:
         for r in vault_load(a.vault_file):

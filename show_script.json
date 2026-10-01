@@ -16,9 +16,8 @@
         ""
       ],
       [
-        "THE FANTABULOUS",
-        "DEL ROAR",
-        "FORTUNE EXCHANGER"
+        "WELCOME",
+        "DEL ROAR WAITS..."
       ]
     ]
   },
@@ -50,8 +49,9 @@
       "bed": "vamp_1",
       "bed_fade": 0.8,
       "prompt": [
-        "I STAY UP AT NIGHT",
-        "WORRYING ABOUT THE"
+        "MY FRIENDS",
+        "CALL ME...",
+        "line 3"
       ],
       "hint": "SPEAK NOW",
       "knob": {
@@ -67,9 +67,9 @@
       "type": "play",
       "clip": "segment_2",
       "board": [
-        "IT IS SPOKEN.",
-        "IT IS HEARD.",
-        "IT IS DONE."
+        "",
+        "",
+        ""
       ],
       "hold": 6
     },
@@ -79,8 +79,9 @@
       "bed": "vamp_2",
       "bed_fade": 0.8,
       "prompt": [
-        "ONE THING I WISH TO",
-        "SEE BEFORE I DIE IS"
+        "number of times",
+        "around the sun",
+        ""
       ],
       "hint": "SPEAK NOW",
       "knob": {
@@ -95,45 +96,39 @@
       "id": "segment_3",
       "type": "play",
       "clip": "segment_3",
-      "board": [
-        "IT IS SPOKEN.",
-        "IT IS HEARD.",
-        "IT IS DONE."
-      ],
-      "hold": 6
+      "board": [],
+      "hold": 0
     },
     {
       "id": "listen_3",
-      "type": "listen",
+      "type": "choose",
       "bed": "vamp_3",
       "bed_fade": 0,
-      "prompt": [
-        "I STAY UP AT NIGHT",
-        "WORRYING ABOUT THE"
+      "board": [
+        "TURN THE DIAL"
       ],
-      "hint": "SPEAK NOW",
       "knob": {
-        "left": "SAY IT AGAIN",
-        "right": "LET IT STAND"
+        "left": "NOT YET",
+        "right": "YES, TRADE!"
       },
-      "on_left": "again",
-      "on_right": "next",
-      "field": "trade"
+      "on_left": "end",
+      "on_right": "next"
     },
     {
       "id": "segment_4",
       "type": "play",
       "clip": "segment_4",
       "board": [
-        "IT IS SPOKEN.",
-        "IT IS HEARD.",
-        "IT IS DONE."
+        "",
+        "",
+        ""
       ],
-      "hold": 6
+      "hold": 0
     },
     {
       "id": "listen_4",
       "type": "listen",
+      "field": "hope",
       "bed": "vamp_4",
       "bed_fade": 0.8,
       "prompt": [
@@ -153,15 +148,16 @@
       "type": "play",
       "clip": "segment_5",
       "board": [
-        "IT IS SPOKEN.",
-        "IT IS HEARD.",
-        "IT IS DONE."
+        "",
+        "",
+        ""
       ],
-      "hold": 6
+      "hold": 0
     },
     {
       "id": "listen_5",
       "type": "listen",
+      "field": "fear",
       "bed": "vamp_5",
       "bed_fade": 0.8,
       "prompt": [
@@ -181,41 +177,39 @@
       "type": "play",
       "clip": "segment_6",
       "board": [
-        "IT IS SPOKEN.",
-        "IT IS HEARD.",
-        "IT IS DONE."
+        "",
+        "",
+        ""
       ],
-      "hold": 6
+      "hold": 0
     },
     {
       "id": "listen_6",
-      "type": "listen",
+      "type": "choose",
       "bed": "vamp_6",
-      "bed_fade": 0.8,
-      "prompt": [
-        "ONE THING I WISH TO",
-        "SEE BEFORE I DIE IS"
-      ],
-      "hint": "SPEAK NOW",
-      "knob": {
-        "left": "SAY IT AGAIN",
-        "right": "LET IT STAND"
-      },
-      "on_left": "again",
-      "on_right": "next"
-    },
-    {
-      "id": "segment_7",
-      "type": "play",
-      "clip": "segment_7",
+      "bed_fade": 0,
       "board": [
-        "IT IS SPOKEN.",
-        "IT IS HEARD.",
-        "IT IS DONE."
+        "I'll Trade my",
+        "",
+        ""
       ],
-      "hold": 6,
-      "ticket": true
+      "knob": {
+        "left": "BRIGHT MOMENT",
+        "right": "DARK MOMENT"
+      },
+      "on_left": "next",
+      "on_right": "next",
+      "field": "valence",
+      "value_left": "light",
+      "value_right": "dark"
     },
+      {
+    "id": "segment_7",
+    "type": "play",
+    "clip": "segment_7",
+    "ticket": true,
+    "ticket_delay": 20
+  },
     {
       "id": "done",
       "type": "end"
@@ -223,7 +217,7 @@
   ],
   "ticket": {
     "enabled": true,
-    "printer": "file:ticket.out",
+    "printer": "usb:0x154f:0x154f",
     "width": 42,
     "valence": "dark",
     "vault": "vault.jsonl",
@@ -232,6 +226,8 @@
       "IT IS SPOKEN.",
       "TAKE YOUR BILL."
     ],
-    "hold": 8
+    "hold": 8,
+    "style": "image",
+    "ratio": 1.25
   }
 }

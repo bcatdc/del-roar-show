@@ -63,3 +63,25 @@ def test_printer_bytes_open_and_cut(tmp_path):
     ticket.send("HELLO", f"file:{out}")
     data = open(out, "rb").read()
     assert data.startswith(b"\x1b@") and data.endswith(b"\x1dVB\x00")
+
+
+def test_only_approved_answers_reach_a_stranger(tmp_path):
+    vault = str(tmp_path / "v.jsonl")
+    ticket.vault_add("something nobody has read", "dark", "ZED", 40, path=vault)
+    for seed in range(40):
+        drawn = ticket.vault_draw("dark", path=vault, rng=random.Random(seed))
+        assert drawn["text"] != "something nobody has read"
+        assert drawn["moderated"] is True
+
+
+def test_review_approves_and_rejects(tmp_path):
+    vault = str(tmp_path / "v.jsonl")
+    ticket.vault_add("the long drive north", "dark", "ZED", 40, path=vault)
+    ticket.vault_add("something unkind", "dark", "YAN", 30, path=vault)
+    answers = iter(["a", "r"])
+    ticket.review(vault, ask=lambda _p: next(answers))
+    rows = {r["text"]: r["moderated"] for r in ticket._read_rows(vault)[0]}
+    assert rows == {"the long drive north": True, "something unkind": "rejected"}
+    pool = {ticket.vault_draw("dark", path=vault, rng=random.Random(s))["text"]
+            for s in range(60)}
+    assert "the long drive north" in pool and "something unkind" not in pool

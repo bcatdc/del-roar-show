@@ -1,0 +1,5 @@
+[Unit]
+Description=Bring the wifi back if the network is lost
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/netwatch

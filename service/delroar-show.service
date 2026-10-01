@@ -2,7 +2,6 @@
 Description=Del Roar show logic
 PartOf=delroar.target
 After=delroar-renderer.service
-BindsTo=delroar-renderer.service
 
 # keep retrying forever: no giving up after a few fast failures at boot
 StartLimitIntervalSec=0

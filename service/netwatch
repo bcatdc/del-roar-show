@@ -1,0 +1,13 @@
+#!/bin/sh
+# If the network is gone, restart the wifi. Never touches the show.
+up() {
+  gw=$(ip route | awk '/^default/ {print $3; exit}')
+  { [ -n "$gw" ] && ping -c 2 -W 3 "$gw" >/dev/null 2>&1; } || ping -c 2 -W 3 1.1.1.1 >/dev/null 2>&1
+}
+up && exit 0
+logger -t netwatch "network down; toggling the wifi radio"
+nmcli radio wifi off; sleep 3; nmcli radio wifi on; sleep 45
+up && { logger -t netwatch "back after radio toggle"; exit 0; }
+logger -t netwatch "still down; reloading the wifi driver"
+modprobe -r iwlmvm iwlwifi; sleep 3; modprobe iwlwifi; sleep 45
+up && logger -t netwatch "back after driver reload" || logger -t netwatch "still down"

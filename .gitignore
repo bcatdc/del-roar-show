@@ -27,3 +27,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .venv/
+
+# ticket output and test leftovers
+ticket.png
+last_ticket.*
+screen_ticket.png
+test_vault.jsonl
+test_script.json
+memlog.txt
