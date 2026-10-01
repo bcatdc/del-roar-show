@@ -2,3 +2,6 @@
 pytest>=8.0
 pyflakes>=3.2
 numpy>=1.26
+
+pygame-ce>=2.5
+Pillow>=10
